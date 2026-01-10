@@ -13,7 +13,7 @@ model = AutoModelForCausalLM.from_pretrained(
 messages = [{"role":"user", "content": "用一句话解释什么是KV Cache"}]
 text = tokenizer.apply_chat_template(
     messages,
-    tokenizer=False,
+    tokenize=False,
     add_generation_prompt=True,
     enable_thinking=False   # 先关闭thinking
 )
