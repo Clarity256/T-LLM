@@ -94,9 +94,8 @@ class Qwen3DecoderLayer(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """
         Args:
-            positions: [batch_size, seq_len] 用于 RoPE
+            positions: [batch_size, seq_len] for RoPE
             hidden_states: [batch_size, seq_len, hidden_size]
-            residual: 用于兼容 vLLM 风格的残差传递 (可选)
         """
         # if the first layer
         if residual is None:
