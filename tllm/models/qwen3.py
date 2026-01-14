@@ -3,8 +3,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import Qwen3Config
 
-from tllm.layers.linear import QKVParallelLinear, RowParallelLinear
+from tllm.layers.linear import QKVParallelLinear, RowParallelLinear, MergedColumnParallelLinear
 from tllm.layers.layernorm import RMSNorm
+from tllm.layers.activation import SiluAndMul
 from tllm.layers.embed_head import VocabParallelEmbedding, ParallelLMHead
 
 class Qwen3Attention(nn.Module):
@@ -18,28 +19,35 @@ class Qwen3Attention(nn.Module):
         self.num_kv_heads = config.num_key_value_heads
         self.head_dim = config.head_dim
         self.scaling = config.head_dim ** -0.5
+        self.max_position = config.max_position_embeddings
         self.qkv_bias = getattr(config, "attention_bias", False)
+
+        self.q_size = self.num_heads * self.head_dim
+        self.kv_size = self.num_kv_heads * self.head_dim
         self.qkv_proj = QKVParallelLinear(
-            self.hidden_size,
-            self.num_heads * self.head_dim,
-            self.qkv_bias,
+            hidden_size = self.hidden_size,
+            head_dim = self.head_dim,
+            num_heads = self.num_heads,
+            num_kv_heads = self.num_kv_heads,
+            bias = self.qkv_bias,
         )
         self.o_proj = RowParallelLinear(
-            self.num_heads * self.head_dim,
-            self.hidden_size,
-            self.qkv_bias,
+            hidden_size = self.hidden_size,
+
+            bias = False,
         )
         self.attn = Attention(
-            self.num_heads,
-            self.head_dim,
-            self.scaling,
-            self.num_kv_heads,
+            num_heads = self.num_heads,
+            head_dim = self.head_dim,
+            scaling = self.scaling,
+            num_kv_heads = self.num_kv_heads,
         )
         self.rotary_emb = get_rope(
-            self.head_dim,
+            head_dim = self.head_dim,
             rotary_dim = self.head_dim,
-            max_position,
+            max_position = self.max_position,
         )
+        self.rms_norm = RMSNorm
 
     def forward(
             self,
@@ -47,19 +55,56 @@ class Qwen3Attention(nn.Module):
             hidden_states: torch.Tensor,
             kv_cache: tuple[torch.Tensor, torch.Tensor] | None
     ) -> torch.Tensor:
+        """
+        Args:
+            forward(positions: [B,T], hidden_states: [B,T,H], kv_cache: tuple[k_cache, v_cache] | None) -> [B,T,H]
+            k_cache: [B, num_kv_heads, max_seq, head_dim],
+            v_cache: [B, num_kv_heads, max_seq, head_dim],
+        """
+        # === QKV Projection ===
         qkv = self.qkv_proj(hidden_states)
-        q, k, v = qkv.split([self.])
-
+        q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
+        q = q.view(-1, self.num_heads, self.head_dim)
+        k = k.view(-1, self.num_kv_heads, self.head_dim)
+        v = v.view(-1, self.num_kv_heads, self.head_dim)
+        if not self.qkv_bias:
+            q = self.
         q, k = self.rotary_emb(positions, q, k)
         o = self.attn(q, k, v)
         output = self.o_proj(o)
         return output
 
 
-# class Qwen3MLP(nn.Module):
-#     def __init__(self, config):
+class Qwen3MLP(nn.Module):
+    def __init__(
+            self,
+            config: Qwen3Config,
+    ):
+        super().__init__()
+        self.hidden_size = config.hidden_size
+        self.intermediate_size = config.intermediate_size
+        self.gate_up = MergedColumnParallelLinear(
+            self.hidden_size,
+            self.intermediate_size * 2,
+            bias=False,
+        )
+        self.gate_down = RowParallelLinear(
+            self.intermediate_size,
+            self.hidden_size,
+            bias = False,
+        )
+        self.activation = SiluAndMul()
 
-#     def forward(self, x, freqs_cis):
+    def forward(
+            self,
+            x: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Args:
+            forward(x: [B,T,H]) -> [B,T,H]
+        """
+        return self.gate_down(self.activation(self.gate_up(x)))
+
 
 class Qwen3DecoderLayer(nn.Module):
     def __init__(
