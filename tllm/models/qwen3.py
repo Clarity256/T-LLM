@@ -21,6 +21,7 @@ class Qwen3Attention(nn.Module):
         self.scaling = config.head_dim ** -0.5
         self.max_position = config.max_position_embeddings
         self.qkv_bias = getattr(config, "attention_bias", False)
+        self.rms_norm_eps = config.rms_norm_eps
 
         self.q_size = self.num_heads * self.head_dim
         self.kv_size = self.num_kv_heads * self.head_dim
@@ -32,8 +33,8 @@ class Qwen3Attention(nn.Module):
             bias = self.qkv_bias,
         )
         self.o_proj = RowParallelLinear(
-            hidden_size = self.hidden_size,
-
+            input_size = self.head_dim * self.num_heads,
+            output_size = self.hidden_size,
             bias = False,
         )
         self.attn = Attention(
@@ -47,7 +48,11 @@ class Qwen3Attention(nn.Module):
             rotary_dim = self.head_dim,
             max_position = self.max_position,
         )
-        self.rms_norm = RMSNorm
+        if not self.qkv_bias:
+            self.rms_norm = RMSNorm(
+                head_dim = self.head_dim,
+                eps = self.rms_norm_eps,
+            )
 
     def forward(
             self,
@@ -68,7 +73,8 @@ class Qwen3Attention(nn.Module):
         k = k.view(-1, self.num_kv_heads, self.head_dim)
         v = v.view(-1, self.num_kv_heads, self.head_dim)
         if not self.qkv_bias:
-            q = self.
+            q = self.rms_norm(q)
+            k = self.rms_norm(k)
         q, k = self.rotary_emb(positions, q, k)
         o = self.attn(q, k, v)
         output = self.o_proj(o)
@@ -184,19 +190,19 @@ class Qwen3ForCausalLM(nn.Module):
     ) -> None:
         super().__init__()
         self.model = Qwen3Model(config)
-        self.lm_head = ParallelLMHead(config.vocab_size, config.hidden_Size)
+        self.lm_head = ParallelLMHead(config.vocab_size, config.hidden_size)
         # Qwen3模型中tie_word_embeddings=False
         if config.tie_word_embeddings:
             self.lm_head.weight.data = self.model.embed_tokens.weight.data
 
     def forward(
             self,
-            inpud_ids: torch.Tensor,
+            input_ids: torch.Tensor,
             positions: torch.Tensor
     ) -> torch.Tensor:
-        return self.model(inpud_ids, positions)
+        return self.model(input_ids, positions)
     
-    def comput_logits(
+    def compute_logits(
             self,
             hidden_states: torch.Tensor
     ) -> torch.Tensor:
