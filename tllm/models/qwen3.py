@@ -3,9 +3,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import Qwen3Config
 
+from tllm.layers.attention import Attention
 from tllm.layers.linear import QKVParallelLinear, RowParallelLinear, MergedColumnParallelLinear
 from tllm.layers.layernorm import RMSNorm
 from tllm.layers.activation import SiluAndMul
+from tllm.layers.rotary_embedding import get_rope
 from tllm.layers.embed_head import VocabParallelEmbedding, ParallelLMHead
 
 class Qwen3Attention(nn.Module):
@@ -48,17 +50,16 @@ class Qwen3Attention(nn.Module):
             rotary_dim = self.head_dim,
             max_position = self.max_position,
         )
-        if not self.qkv_bias:
-            self.rms_norm = RMSNorm(
-                head_dim = self.head_dim,
-                eps = self.rms_norm_eps,
-            )
+        self.rms_norm = RMSNorm(
+            head_dim = self.head_dim,
+            eps = self.rms_norm_eps,
+        )
 
     def forward(
             self,
             positions: torch.Tensor,
             hidden_states: torch.Tensor,
-            kv_cache: tuple[torch.Tensor, torch.Tensor] | None
+            # kv_cache: tuple[torch.Tensor, torch.Tensor] | None
     ) -> torch.Tensor:
         """
         Args:
@@ -69,9 +70,10 @@ class Qwen3Attention(nn.Module):
         # === QKV Projection ===
         qkv = self.qkv_proj(hidden_states)
         q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
-        q = q.view(-1, self.num_heads, self.head_dim)
-        k = k.view(-1, self.num_kv_heads, self.head_dim)
-        v = v.view(-1, self.num_kv_heads, self.head_dim)
+        B, T, _ = hidden_states.shape
+        q = q.view(B, T, self.num_heads, self.head_dim)
+        k = k.view(B, T, self.num_kv_heads, self.head_dim)
+        v = v.view(B, T, self.num_kv_heads, self.head_dim)
         if not self.qkv_bias:
             q = self.rms_norm(q)
             k = self.rms_norm(k)
@@ -90,13 +92,13 @@ class Qwen3MLP(nn.Module):
         self.hidden_size = config.hidden_size
         self.intermediate_size = config.intermediate_size
         self.gate_up = MergedColumnParallelLinear(
-            self.hidden_size,
-            self.intermediate_size * 2,
+            input_size = self.hidden_size,
+            output_size = self.intermediate_size * 2,
             bias=False,
         )
         self.gate_down = RowParallelLinear(
-            self.intermediate_size,
-            self.hidden_size,
+            input_size = self.intermediate_size,
+            output_size = self.hidden_size,
             bias = False,
         )
         self.activation = SiluAndMul()
@@ -120,18 +122,6 @@ class Qwen3DecoderLayer(nn.Module):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.self_attn = Qwen3Attention(config)
-        # self.self_attn = Qwen3Attention(
-        #     hidden_size = config.hidden_size,
-        #     num_heads = config.num_attention_heads,
-        #     num_kv_heads = config.num_key_value_heads,
-        #     rms_norm_eps = config.rms_norm_eps,
-        #     max_position = config.max_position_embeddings,
-        #     qkv_bias = getattr(config, "attention_bias", False),
-        #     head_dim = getattr(config, "head_dim", None),
-        #     rope_theta = config.rope_theta,
-        #     rope_scaling = config.rope_scaling,
-        # )
-        # SwiGLU
         self.mlp = Qwen3MLP(config)
         # Layer Norm (Pre-Norm)
         self.input_layernorm = RMSNorm(config.hidden_size, eps = config.rms_norm_eps)

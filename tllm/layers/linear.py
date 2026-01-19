@@ -42,7 +42,7 @@ class QKVParallelLinear(LinearBase):
             bias: bool = False,
     ):
         super().__init__()
-        self.Linear = nn.Linear(input_size, out_feature, bias = bias)
+        self.Linear = nn.Linear(input_size, output_size, bias = bias)
     
     def forward(self, x):
         return self.Linear(x)
