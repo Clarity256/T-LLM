@@ -22,5 +22,6 @@ class RotaryEmbedding(nn.Module):
 
         self.base = base
         self.max_position_embeddings = max_position_embeddings
-        
+        inv_freq = 1.0 / (self.base ** (torch.arange(0, self.rotary_dim, 2).float() / self.rotary_dim))
+
         
