@@ -7,7 +7,7 @@ from tllm.layers.attention import Attention
 from tllm.layers.linear import QKVParallelLinear, RowParallelLinear, MergedColumnParallelLinear
 from tllm.layers.layernorm import RMSNorm
 from tllm.layers.activation import SiluAndMul
-from tllm.layers.rotary_embedding import get_rope
+from tllm.layers.rotary_embedding import RotaryEmbedding
 from tllm.layers.embed_head import VocabParallelEmbedding, ParallelLMHead
 
 class Qwen3Attention(nn.Module):
@@ -45,8 +45,7 @@ class Qwen3Attention(nn.Module):
             scaling = self.scaling,
             num_kv_heads = self.num_kv_heads,
         )
-        self.rotary_emb = get_rope(
-            head_dim = self.head_dim,
+        self.rotary_emb = RotaryEmbedding(
             rotary_dim = self.head_dim,
             max_position = self.max_position,
         )
