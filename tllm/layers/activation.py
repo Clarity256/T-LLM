@@ -2,13 +2,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# import time
-
 class SiluAndMul(nn.Module):
     def __init__(self):
         super().__init__()
 
-    @torch.compile
+    # @torch.compile
     def forward(
             self,
             x: torch.Tensor,
