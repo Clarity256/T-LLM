@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import triton
 import triton.language as tl
-from tllm.utils import get_context
+from tllm.utils.context import get_context
 
 @triton.jit
 def store_kvcache_kernel(
@@ -92,6 +92,7 @@ class Attention(nn.Module):
             k: torch.Tensor,
             v: torch.Tensor,
     ) -> torch.Tensor:
+        # Triton + KV-cache path (kept for future implementation).
         context = get_context()
         k_cache, v_cache = self.k_cache, self.v_cache
 

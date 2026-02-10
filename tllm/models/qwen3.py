@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import Qwen3Config
 
-from tllm.layers.attention import Attention
+from tllm.layers.attention_torch import Attention
 from tllm.layers.linear import QKVParallelLinear, RowParallelLinear, MergedColumnParallelLinear
 from tllm.layers.layernorm import RMSNorm
 from tllm.layers.activation import SiluAndMul
